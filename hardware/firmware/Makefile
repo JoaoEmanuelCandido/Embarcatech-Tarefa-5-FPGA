@@ -3,7 +3,7 @@ BUILD_DIR?=../litex/build/colorlight_i5
 include $(BUILD_DIR)/software/include/generated/variables.mak
 include $(SOC_DIRECTORY)/software/common.mak
 
-OBJECTS   = crt0.o main.o
+OBJECTS   = crt0.o main.o rfm9x.o
 
 all: main.bin
 
@@ -25,6 +25,9 @@ main.elf: $(OBJECTS)
 
 crt0.o: $(CPU_DIRECTORY)/crt0.S
 	$(assemble)
+
+rfm9x.o: lib/rfm9x.c
+	$(compile)
 
 %.o: %.c
 	$(compile)

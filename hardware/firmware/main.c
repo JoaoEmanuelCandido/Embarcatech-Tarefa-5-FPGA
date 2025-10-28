@@ -1,58 +1,172 @@
-// main.c - FPGA SoC (VexRiscv) bare-metal
-#include <stdint.h>
 #include <stdio.h>
-#include "csr.h"    // gerado pelo LiteX (ex: csr.h, csr.c)
-#include "i2c.h"    // drivers simples (se implementado)
-#include "spi.h"
-#include "timer.h"
+#include <stdlib.h>
+#include <string.h>
 
-#define NODE_ID 0x01
-static uint16_t seq = 0;
+#include <irq.h>
+#include <uart.h>
+#include <console.h>
+#include <generated/csr.h>
 
-int16_t aht10_read_temperature_raw(); // retorna temp*100
-uint16_t aht10_read_humidity_raw();   // retorna hum*100
+#include "./lib/rfm9x.h"
 
-void rfm96_init();
-void rfm96_send(uint8_t *data, int len);
+#define N_ELEMENTS 8
 
-uint8_t checksum(uint8_t *buf, int len) {
-    uint8_t x = 0;
-    for (int i=0;i<len;i++) x ^= buf[i];
-    return x;
+static char *readstr(void)
+{
+    char c[2];
+    static char s[64];
+    static int ptr = 0;
+
+    if(readchar_nonblock()) {
+        c[0] = readchar();
+        c[1] = 0;
+        switch(c[0]) {
+            case 0x7f:
+            case 0x08:
+                if(ptr > 0) {
+                    ptr--;
+                    putsnonl("\x08 \x08");
+                }
+                break;
+            case 0x07:
+                break;
+            case '\r':
+            case '\n':
+                s[ptr] = 0x00;
+                putsnonl("\n");
+                ptr = 0;
+                return s;
+            default:
+                if(ptr >= (sizeof(s) - 1))
+                    break;
+                putsnonl(c);
+                s[ptr] = c[0];
+                ptr++;
+                break;
+        }
+    }
+    return NULL;
 }
 
-int main() {
-    // Inicializações
-    spi_init();   // inicializa SPI (LiteX CSR SPI)
-    i2c_init();   // inicializa I2C (LiteX CSR I2C)
-    timer_init();
-
-    rfm96_init();
-
-    while (1) {
-        // Ler AHT10
-        int16_t temp_raw = aht10_read_temperature_raw(); // exemplo: 2345 -> 23.45 C
-        uint16_t hum_raw = aht10_read_humidity_raw();
-
-        // montar pacote
-        uint8_t pkt[10];
-        pkt[0] = 0xAA;
-        pkt[1] = 0x01; // version
-        pkt[2] = NODE_ID;
-        pkt[3] = (uint8_t)(seq & 0xFF);
-        pkt[4] = (uint8_t)((seq >> 8) & 0xFF);
-        pkt[5] = (uint8_t)((temp_raw >> 8) & 0xFF);
-        pkt[6] = (uint8_t)(temp_raw & 0xFF);
-        pkt[7] = (uint8_t)((hum_raw >> 8) & 0xFF);
-        pkt[8] = (uint8_t)(hum_raw & 0xFF);
-        pkt[9] = checksum(&pkt[1], 8);
-
-        rfm96_send(pkt, 10);
-
-        seq++;
-
-        // esperar 10s
-        timer_sleep_ms(10000);
+static char *get_token(char **str)
+{
+    char *c, *d;
+    c = strchr(*str, ' ');
+    if(c == NULL) {
+        d = *str;
+        *str += strlen(*str);
+        return d;
     }
+    *c = 0;
+    d = *str;
+    *str = c + 1;
+    return d;
+}
+
+static void prompt(void)
+{
+    printf("RUNTIME>");
+}
+
+static void help(void)
+{
+    puts("Available commands:");
+    puts("help         - opcoes de comandos");
+    puts("reboot       - reboot CPU");
+    puts("led          - teste do led");
+    puts("lora_info      - Lendo as informacoes do modulo Lora");
+    puts("lora_select      - Selecionando o modulo Lora");
+    puts("lora_deselect      - Desselecionando o modulo Lora");
+    puts("lora_setup      - Setup do modulo Lora");
+    puts("lora_click      - Mensagem de teste do modulo Lora");
+}
+
+static void reboot(void)
+{
+    ctrl_reset_write(1);
+}
+
+static void toggle_led(void)
+{
+    int i;
+    printf("invertendo led...\n");
+    i = leds_out_read();
+    leds_out_write(!i);
+}
+
+static void lora_info(void)
+{
+    printf("Lendo Lora...\n");
+    printf("Ret: %x\n", rfm9x_read(0x42));
+}
+
+static void lora_select(void)
+{
+    printf("Selecionando Lora...\n");
+    rfm9x_select();
+}
+
+static void lora_deselect(void)
+{
+    printf("Desselcionando Lora...\n");
+    rfm9x_deselect();
+}
+
+static void lora_setup(void)
+{
+    printf("Configurando Lora...\n");
+    rfm9x_setup(915000000);
+}
+
+static void lora_click(void)
+{
+    printf("Enviando mensagem Lora...\n");
+    rfm9x_send("Click!");
+}
+
+static void console_service(void)
+{
+    char *str, *token;
+    str = readstr();
+    if(str == NULL) return;
+
+    token = get_token(&str);
+    if(strcmp(token, "help") == 0)
+        help();
+    else if(strcmp(token, "reboot") == 0)
+        reboot();
+    else if(strcmp(token, "led") == 0)
+        toggle_led();
+    else if(strcmp(token, "lora_info") == 0)
+        lora_info();
+    else if(strcmp(token, "lora_select") == 0)
+        lora_select();
+    else if(strcmp(token, "lora_deselect") == 0)
+        lora_deselect();
+    else if(strcmp(token, "lora_setup") == 0)
+        lora_setup();
+    else if(strcmp(token, "lora_click") == 0)
+        lora_click();
+    else
+        puts("Comando desconhecido. Digite 'help'.");
+
+    prompt();
+}
+
+int main(void)
+{
+#ifdef CONFIG_CPU_HAS_INTERRUPT
+    irq_setmask(0);
+    irq_setie(1);
+#endif
+    uart_init();
+
+    printf("Hellorld!\n");
+    help();
+    prompt();
+
+    while(1)
+        console_service();
+
     return 0;
 }

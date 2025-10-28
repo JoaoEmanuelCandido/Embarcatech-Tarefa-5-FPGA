@@ -17,11 +17,13 @@ from litex_boards.platforms import colorlight_i5
 from litex.soc.cores.clock import *
 from litex.soc.integration.soc_core import *
 from litex.soc.integration.builder import *
+from litex.soc.doc import generate_docs
 from litex.soc.cores.video import VideoHDMIPHY
 from litex.soc.cores.led import LedChaser
 
 from litex.soc.cores.spi import SPIMaster
 from litex.soc.cores.i2c import I2CMaster
+from litex.soc.cores.gpio import GPIOOut
 
 from litex.build.generic_platform import Subsignal, Pins, IOStandard
 
@@ -193,12 +195,16 @@ class BaseSoC(SoCCore):
                 Subsignal("cs_n", Pins("N17")),
                 IOStandard("LVCMOS33")
             ),
+            ("spi_rst", 0, Pins("L20"), IOStandard("LVCMOS33")),
         ]
 
         platform.add_extension(spi_pads)
 
         self.spi = SPIMaster(pads=platform.request("spi"), data_width=8, sys_clk_freq=sys_clk_freq, spi_clk_freq=1e6)
         self.add_csr("spi")
+
+        self.submodules.spi_rst = GPIOOut(platform.request("spi_rst"))
+        self.add_csr("spi_rst")
 
 # Build --------------------------------------------------------------------------------------------
 
@@ -247,6 +253,8 @@ def main():
     builder = Builder(soc, **parser.builder_argdict)
     if args.build:
         builder.build(**parser.toolchain_argdict)
+
+    generate_docs(soc, "build/doc")
 
     if args.load:
         prog = soc.platform.create_programmer()
