@@ -6,6 +6,9 @@
 
 #include "rfm9x.h" 
 
+#define SPI_MODE_MANUAL (1 << 16)
+#define SPI_CS_MASK     0x0001
+
 static uint8_t spi_transfer(uint8_t val) {
     spi_mosi_write(val);
     
@@ -17,11 +20,13 @@ static uint8_t spi_transfer(uint8_t val) {
 }
 
 void rfm9x_select(void) {
-    spi_cs_write(0);
+    spi_cs_write(SPI_MODE_MANUAL | SPI_CS_MASK);
+    busy_wait_us(5);
 }
 
 void rfm9x_deselect(void) {
-    spi_cs_write(1);
+    spi_cs_write(SPI_MODE_MANUAL | 0x0000);
+    busy_wait_us(5);
 }
 
 uint8_t rfm9x_read(uint8_t reg) {
@@ -44,7 +49,7 @@ void rfm9x_reset(void) {
     spi_rst_out_write(0);
     busy_wait_us(10000);
     spi_rst_out_write(1);
-    busy_wait_us(10000);
+    busy_wait_us(100000);
 }
 
 void rfm9x_setup(uint64_t frequency) {
