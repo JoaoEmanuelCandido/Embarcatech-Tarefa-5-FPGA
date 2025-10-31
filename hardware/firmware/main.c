@@ -1,15 +1,24 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <math.h>
 
 #include <irq.h>
 #include <uart.h>
 #include <console.h>
 #include <generated/csr.h>
 
-#include "./lib/rfm9x.h"
+#include "./lib/rfm95.h"
+
+#include "./lib/aht10.h" 
+void i2c_init(void);
 
 #define N_ELEMENTS 8
+
+static bool g_lora_ok   = false;
+static bool g_sensor_ok = false;
 
 static char *readstr(void)
 {
@@ -70,15 +79,15 @@ static void prompt(void)
 
 static void help(void)
 {
-    puts("Available commands:");
-    puts("help         - opcoes de comandos");
-    puts("reboot       - reboot CPU");
-    puts("led          - teste do led");
-    puts("lora_info      - Lendo as informacoes do modulo Lora");
-    puts("lora_select      - Selecionando o modulo Lora");
-    puts("lora_deselect      - Desselecionando o modulo Lora");
-    puts("lora_setup      - Setup do modulo Lora");
-    puts("lora_click      - Mensagem de teste do modulo Lora");
+    puts("Comandos Auxiliares:");
+    puts("help                 - Mostra todos os comandos disponiveis");
+    puts("reboot               - Reinicia a CPU");
+    puts("\nComandos do módulo LoRa:");
+    puts("lora_setup           - Realiza o setup do modulo LoRa (freq 915MHz)");
+    puts("lora_info            - Lê informacoes do modulo LoRa");
+    puts("\nComandos do sensor AHT10:");
+    puts("sensor_setup         - Inicializa I2C e o AHT10");
+    puts("sensor_send          - Lê o AHT10 e envia via LoRa (temp/umid)\n\n");
 }
 
 static void reboot(void)
@@ -86,42 +95,88 @@ static void reboot(void)
     ctrl_reset_write(1);
 }
 
-static void toggle_led(void)
-{
-    int i;
-    printf("invertendo led...\n");
-    i = leds_out_read();
-    leds_out_write(!i);
-}
-
 static void lora_info(void)
 {
-    printf("Lendo Lora...\n");
-    printf("Ret: %x\n", rfm9x_read(0x42));
-}
-
-static void lora_select(void)
-{
-    printf("Selecionando Lora...\n");
-    rfm9x_select();
-}
-
-static void lora_deselect(void)
-{
-    printf("Desselcionando Lora...\n");
-    rfm9x_deselect();
+    printf("Lendo LoRa...\n");
+    printf("Ret: %x\n", rfm95_read_reg(0x42));
 }
 
 static void lora_setup(void)
 {
-    printf("Configurando Lora...\n");
-    rfm9x_setup(915000000);
+    printf("Configurando LoRa (915 MHz)...\n");
+    if (!rfm95_init()) {
+        printf("Falha ao inicializar LoRa.\n");
+        return;
+    }
+    g_lora_ok = true;
+    printf("LoRa pronto.\n");
 }
 
-static void lora_click(void)
+static inline int16_t clamp_to_i16(int32_t v) {
+    if (v >  32767) return  32767;
+    if (v < -32768) return -32768;
+    return (int16_t)v;
+}
+
+static bool lora_send_data_i16(int16_t temperatura, int16_t umidade)
 {
-    printf("Enviando mensagem Lora...\n");
-    rfm9x_send("Click!");
+    uint8_t buf[4];
+    buf[0] = (uint8_t)(temperatura & 0xFF);
+    buf[1] = (uint8_t)((temperatura >> 8) & 0xFF);
+    buf[2] = (uint8_t)(umidade & 0xFF);
+    buf[3] = (uint8_t)((umidade >> 8) & 0xFF);
+
+    printf("Enviando (i16): temp=%d (x0.01 C), umid=%d (x0.01 %%)\n", temperatura, umidade);
+    return rfm95_send_bytes(buf, sizeof(buf));
+}
+
+static bool lora_send_data(float temp_c, float umid_pct)
+{
+    int32_t t = (int32_t)lroundf(temp_c  * 100.0f);
+    int32_t u = (int32_t)lroundf(umid_pct * 100.0f);
+    return lora_send_data_i16(clamp_to_i16(t), clamp_to_i16(u));
+}
+
+static void sensor_setup(void)
+{
+    printf("Inicializando I2C e AHT10...\n");
+    i2c_init();
+    aht10_init();
+    g_sensor_ok = true;
+    printf("AHT10 pronto.\n");
+}
+
+static bool sensor_read_once(float *temp_c, float *umid_pct)
+{
+    if (!g_sensor_ok) {
+        printf("ERRO: Sensor nao inicializado. Rode 'sensor_setup' primeiro.\n");
+        return false;
+    }
+
+    dados my_data;
+    if (!aht10_get_data(&my_data)) {
+        printf("ERRO ao ler AHT10.\n");
+        return false;
+    }
+
+    *temp_c  = (float)my_data.temperatura / 100.0f;
+    *umid_pct = (float)my_data.umidade / 100.0f;
+
+    printf("AHT10 -> Temperatura: %d.%02d C, Umidade: %d.%02d %%\n",
+           my_data.temperatura/100, abs(my_data.temperatura)%100,
+           my_data.umidade/100,     abs(my_data.umidade)%100);
+
+    return true;
+}
+
+static void sensor_send(void)
+{
+    float t, u;
+    if (!sensor_read_once(&t, &u)) return;
+
+    if (!lora_send_data(t, u)) {
+        printf("ERRO durante envio LoRa.\n");
+    }
 }
 
 static void console_service(void)
@@ -131,28 +186,33 @@ static void console_service(void)
     if(str == NULL) return;
 
     token = get_token(&str);
-    if(strcmp(token, "help") == 0)
+
+    if(strcmp(token, "help") == 0) {
         help();
-    else if(strcmp(token, "reboot") == 0)
+
+    } else if(strcmp(token, "reboot") == 0) {
         reboot();
-    else if(strcmp(token, "led") == 0)
-        toggle_led();
-    else if(strcmp(token, "lora_info") == 0)
+
+    } else if(strcmp(token, "lora_info") == 0) {
         lora_info();
-    else if(strcmp(token, "lora_select") == 0)
-        lora_select();
-    else if(strcmp(token, "lora_deselect") == 0)
-        lora_deselect();
-    else if(strcmp(token, "lora_setup") == 0)
+
+    } else if(strcmp(token, "lora_setup") == 0) {
         lora_setup();
-    else if(strcmp(token, "lora_click") == 0)
-        lora_click();
-    else
+
+    } else if(strcmp(token, "sensor_setup") == 0) {
+        sensor_setup();
+
+    } else if(strcmp(token, "sensor_send") == 0) {
+        sensor_send();
+
+    } else {
         puts("Comando desconhecido. Digite 'help'.");
+    }
 
     prompt();
 }
 
+// ======= main (estrutura preservada) =======
 int main(void)
 {
 #ifdef CONFIG_CPU_HAS_INTERRUPT

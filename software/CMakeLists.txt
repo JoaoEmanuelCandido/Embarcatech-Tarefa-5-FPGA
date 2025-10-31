@@ -35,7 +35,7 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(Tarefa-FPGA-bitdog-05 Tarefa-FPGA-bitdog-05.c inc/ssd1306.c inc/ssd1306_fonts.c inc/lora_RFM95.c)
+add_executable(Tarefa-FPGA-bitdog-05 Tarefa-FPGA-bitdog-05.c inc/ssd1306_i2c.c inc/rfm96.c)
 
 pico_set_program_name(Tarefa-FPGA-bitdog-05 "Tarefa-FPGA-bitdog-05")
 pico_set_program_version(Tarefa-FPGA-bitdog-05 "0.1")

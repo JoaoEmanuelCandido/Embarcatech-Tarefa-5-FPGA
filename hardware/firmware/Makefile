@@ -3,7 +3,7 @@ BUILD_DIR?=../litex/build/colorlight_i5
 include $(BUILD_DIR)/software/include/generated/variables.mak
 include $(SOC_DIRECTORY)/software/common.mak
 
-OBJECTS   = crt0.o main.o rfm9x.o
+OBJECTS   = crt0.o main.o rfm95.o aht10.o
 
 all: main.bin
 
@@ -17,18 +17,27 @@ main.elf: $(OBJECTS)
 	$(CC) $(LDFLAGS) -T linker.ld -N -o $@ \
 		$(OBJECTS) \
 		$(PACKAGES:%=-L$(BUILD_DIR)/software/%) \
-		-Wl,--whole-archive \
 		-Wl,--gc-sections \
 		-Wl,-Map,$@.map \
-		$(LIBS:lib%=-l%)
+		-Wl,-u,_printf_float \
+		-Wl,--start-group \
+		$(LIBS:lib%=-l%) \
+		-lc -lm -lgcc \
+		-Wl,--end-group
 	chmod -x $@
+
 
 crt0.o: $(CPU_DIRECTORY)/crt0.S
 	$(assemble)
 
-rfm9x.o: lib/rfm9x.c
+# ---- fontes que estão em lib/ ----
+rfm95.o: lib/rfm95.c
 	$(compile)
 
+aht10.o: lib/aht10.c
+	$(compile)
+
+# ---- regras genéricas ----
 %.o: %.c
 	$(compile)
 
