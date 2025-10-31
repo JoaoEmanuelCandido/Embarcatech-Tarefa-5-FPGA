@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "rfm9x.h": "c",
+        "csr.h": "c"
+    }
+}
