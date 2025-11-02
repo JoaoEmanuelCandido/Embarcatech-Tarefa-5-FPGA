@@ -9,7 +9,7 @@ O sistema é composto por:
 ---
 
 ## Diagrama em Blocos do Sistema
-![Diagrama em Blocos](./images/Diagrama_de_Blocos.png)
+![Diagrama em Blocos](./images/diagrama_blocos.png)
 
 ---
 
